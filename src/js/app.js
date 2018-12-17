@@ -1,5 +1,5 @@
 import $ from 'jquery';
-import {symbolSub, parseCode, symbolTable , extractFunctionArgs} from './code-analyzer';
+import {symbolSub, parseCode, symbolTable , extractFunctionArgs , symbolicSubstitution} from './code-analyzer';
 import * as escodegen from 'escodegen';
 
 $(document).ready(function () {
@@ -8,7 +8,7 @@ $(document).ready(function () {
         let args = $('#parameterInput').val();
         let codeToSub = parseCode(codeToParse);
         extractFunctionArgs(args);
-        symbolSub(codeToSub);
+        symbolicSubstitution(codeToSub);
         $('#parsedCode').val(escodegen.generate(codeToSub));
     });
 });

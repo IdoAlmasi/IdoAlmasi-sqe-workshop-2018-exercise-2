@@ -1,22 +1,44 @@
 import * as esprima from 'esprima';
+import * as estraverse from 'estraverse';
 
 const parseCode = (codeToParse) => {
     return esprima.parseScript(codeToParse);
 };
 
-let commands = {'Program': programHandler , 'VariableDeclaration' : varDeclarationHandler , 'FunctionDeclaration': functionHandler ,
+let commands = {'VariableDeclaration' : varDeclarationHandler , 'FunctionDeclaration': functionHandler ,
     'WhileStatement': whileHandler , 'IfStatement': ifHandler , 'BlockStatement': blockHandler ,
     'ExpressionStatement': expressionHandler, 'AssignmentExpression':assignmentExpressionHandler ,
-    'BinaryExpression': binaryExpressionHandler , 'ReturnStatement':returnHandler};
+    'BinaryExpression': binaryExpressionHandler , 'MemberExpression': memberExpressionHandler  ,
+    'ReturnStatement':returnHandler};
 
 let symbolTable = {};
 let functionArgs = [];
+let functionParams = [];
+let globalVars = [];
 
 function extractFunctionArgs(args) {
+    functionArgs = [];
     if(args!=='') {
         let parsedCode = parseCode(args);
-        functionArgs = parsedCode.body[0].expression.expressions;
+        if(parsedCode.body[0].expression.type === 'SequenceExpression')
+            functionArgs = parsedCode.body[0].expression.expressions;
+        else
+            functionArgs = [parsedCode.body[0].expression];
     }
+}
+
+function symbolicSubstitution(parsedCode){
+    symbolTable = {};
+    functionParams = [];
+    globalVars = [];
+    parsedCode.body.map(x => {
+        if (x.type === 'Variable Declaration')
+            x.declarations.map(decl => globalVars.push(decl.id.name));
+        symbolSub(x);
+        if(x.type==='FunctionDeclaration'){
+            removeLocalExpressions(x);
+        }
+    });
 }
 
 function symbolSub(parsedCode){
@@ -24,17 +46,12 @@ function symbolSub(parsedCode){
     func !== undefined ? commands[parsedCode.type](parsedCode): null;
 }
 
-function programHandler(parsedCode) {
-    let progBody = parsedCode.body;
-    progBody.map(symbolSub);
-}
-
 function varDeclarationHandler(parsedCode) {
     let declarations = parsedCode.declarations;
     declarations.map(createVarDeclRow);
 }
 
-function createVarDeclRow(x){ //todo: check if this is legal: Arr[i] = ... + Perhaps didn't handle all cases of init (array expressions)
+function createVarDeclRow(x){ //todo: Perhaps didn't handle all cases of init (array expressions)
     if(!isIdentifier(x.init)) {
         symbolSub(x.init);
         symbolTable[x.id.name] = x.init;
@@ -50,31 +67,38 @@ function isIdentifier(x){
 }
 
 function functionHandler(parsedCode) {
-    let params = parsedCode.params.map(x=>x.name);
-    for(let i=0; i<params.length; i++)
-        symbolTable[params[i]] = functionArgs[i];
+    functionParams = parsedCode.params.map(x=>x.name);
+    for(let i=0; i<functionParams.length; i++)
+        symbolTable[functionParams[i]] = functionArgs[i];
     symbolSub(parsedCode.body);
 }
 
 function expressionHandler(parsedCode) {
-    return expressionTypeHandler(parsedCode.expression);
-}
-
-function expressionTypeHandler(parsedCode) {
-    if(isAssignmentExpr(parsedCode)){
-        return assignmentExpressionHandler(parsedCode);
-    }
+    return assignmentExpressionHandler(parsedCode.expression);
 }
 
 function assignmentExpressionHandler(parsedCode) {
-    if(isIdentifier(parsedCode.right)) {
-        symbolTable[parsedCode.left.name] = symbolTable[parsedCode.right.name];
-        parsedCode.right = symbolTable[parsedCode.left.name];
+    if(isIdentifier(parsedCode.left)) {
+        if (isIdentifier(parsedCode.right)) {
+            symbolTable[parsedCode.left.name] = symbolTable[parsedCode.right.name];
+            parsedCode.right = symbolTable[parsedCode.left.name];
+        }
+        else {
+            symbolSub(parsedCode.right);
+            symbolTable[parsedCode.left.name] = parsedCode.right;
+        }
     }
-    else {
+    else{
+        symbolSub(parsedCode.left);
         symbolSub(parsedCode.right);
-        symbolTable[parsedCode.left.name] = parsedCode.right;
     }
+}
+
+function memberExpressionHandler(parsedCode){
+    if(isIdentifier(parsedCode.property))
+        parsedCode.property = symbolTable[parsedCode.property.name];
+    else
+        symbolSub(parsedCode.property);
 }
 
 function binaryExpressionHandler(parsedCode){
@@ -98,22 +122,10 @@ function whileHandler(parsedCode) {
 }
 
 function ifHandler(parsedCode) {
+    symbolSub(parsedCode.test);
     symbolSub(parsedCode.consequent);
-    elseIfHandler(parsedCode.alternate);
-}
-
-function elseIfHandler(parsedCode) {
-    if (parsedCode === null)
-        return;
-    else if (isIfStatement(parsedCode)){
-        symbolSub(parsedCode.consequent);
-        elseIfHandler(parsedCode.alternate);
-    }
-    else
-        symbolSub(parsedCode);
-}
-function isIfStatement(parsedCode) {
-    return parsedCode.type === 'IfStatement';
+    if(parsedCode.alternate!==null)
+        symbolSub(parsedCode.alternate);
 }
 
 function blockHandler(parsedCode){
@@ -128,4 +140,21 @@ function returnHandler(parsedCode){
         symbolSub(parsedCode.argument);
 }
 
-export {parseCode , symbolSub , symbolTable , extractFunctionArgs};
+function removeLocalExpressions(parsedCode){
+    estraverse.replace(parsedCode, {
+        enter: function (body) {
+            if (body.type === 'ExpressionStatement' && isAssignmentExpr(body.expression)){
+                if(canRemoveVar(body))
+                    this.remove();
+            }
+            else if (body.type === 'VariableDeclaration')
+                this.remove();
+        }
+    });
+}
+
+function canRemoveVar(x){
+    return !(functionParams.includes(x.expression.left.name) || globalVars.includes(x.expression.left.name in globalVars));
+}
+
+export {parseCode , symbolSub , symbolTable , extractFunctionArgs , symbolicSubstitution};
