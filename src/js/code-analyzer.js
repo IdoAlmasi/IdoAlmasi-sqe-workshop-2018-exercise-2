@@ -1,8 +1,9 @@
 import * as esprima from 'esprima';
 import * as estraverse from 'estraverse';
+import * as escodegen from 'escodegen';
 
 const parseCode = (codeToParse) => {
-    return esprima.parseScript(codeToParse);
+    return esprima.parseScript(codeToParse, {loc: true});
 };
 
 let commands = {'VariableDeclaration' : varDeclarationHandler , 'FunctionDeclaration': functionHandler ,
@@ -16,6 +17,8 @@ let functionArgs = [];
 let functionParams = [];
 let globalVars = [];
 
+let toPaint = [];
+
 function extractFunctionArgs(args) {
     functionArgs = [];
     if(args!=='') {
@@ -27,10 +30,11 @@ function extractFunctionArgs(args) {
     }
 }
 
-function symbolicSubstitution(parsedCode){
+function symbolicSubstitution(parsedCode , args){
     symbolTable = {};
     functionParams = [];
     globalVars = [];
+    extractFunctionArgs(args);
     parsedCode.body.map(x => {
         if (x.type === 'Variable Declaration')
             x.declarations.map(decl => globalVars.push(decl.id.name));
@@ -39,6 +43,8 @@ function symbolicSubstitution(parsedCode){
             removeLocalExpressions(x);
         }
     });
+    parsedCode = parseCode(escodegen.generate(parsedCode));
+    toPaint = getColoringLocations(parsedCode);
 }
 
 function symbolSub(parsedCode){
@@ -153,8 +159,21 @@ function removeLocalExpressions(parsedCode){
     });
 }
 
+function getColoringLocations(parsedCode) {
+    let locs = [];
+    estraverse.traverse(parsedCode , {
+        enter: function (body) {
+            if (body.type === 'IfStatement')
+                locs.push([body.loc.start.line - 1, eval(escodegen.generate(body.test)) ? true : false]);
+        }
+    });
+    return locs;
+}
+
 function canRemoveVar(x){
     return !(functionParams.includes(x.expression.left.name) || globalVars.includes(x.expression.left.name in globalVars));
 }
 
-export {parseCode , symbolSub , symbolTable , extractFunctionArgs , symbolicSubstitution};
+export {parseCode , symbolSub , symbolTable , extractFunctionArgs , symbolicSubstitution , toPaint};
+
+
