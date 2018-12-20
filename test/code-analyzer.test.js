@@ -30,22 +30,6 @@ describe('Symbol substitution', () => {
         );
     });
 
-    /*it('is creating correct replaced code for a simple function with one global var', () => {
-        let parsedCode = parseCode('let x = 1;\n' +
-            'function f(a , b){\n' +
-            ' let k = b;\n' +
-            ' return a + k;\n' +
-            '}');
-        symbolicSubstitution(parsedCode , 'true , false');
-        assert.equal(
-            escodegen.generate(parsedCode),
-            'let x = 1;\n' +
-            'function f(a, b) {\n' +
-            'return a + b;\n' +
-            '}'
-        );
-    });*/
-
     it('is creating correct replaced code for a simple Member Expression', () => {
         let parsedCode = parseCode('let x = 3;\n' +
             'M[x] = 6;');
@@ -146,6 +130,86 @@ describe('Symbol substitution', () => {
             escodegen.generate(parsedCode),
             'function f(a) {\n' +
             '    a = a * a + (a + a);\n' +
+            '}'
+        );
+    });
+
+    it('is creating correct replaced code for code where the "else-if" evaluates to true', () => {
+        let parsedCode = parseCode('function doo(x){\n' +
+            'if(x===5)\n' +
+            '  return x+2;\n' +
+            'else if(x===6)\n' +
+            '  return 9*x;\n' +
+            'else\n' +
+            '  return 7;\n' +
+            '}');
+        symbolicSubstitution(parsedCode , '6');
+        assert.equal(
+            escodegen.generate(parsedCode),
+            'function doo(x) {\n' +
+            '    if (x === 5)\n' +
+            '        return x + 2;\n' +
+            '    else if (x === 6)\n' +
+            '        return 9 * x;\n' +
+            '    else\n' +
+            '        return 7;\n' +
+            '}'
+        );
+    });
+
+    it('is creating correct replaced code according to assignment examples', () => {
+        let parsedCode = parseCode('function foo(x, y, z){\n' +
+            '    let a = x + 1;\n' +
+            '    let b = a + y;\n' +
+            '    let c = 0;\n' +
+            '    \n' +
+            '    while (a < z) {\n' +
+            '        c = a + b;\n' +
+            '        z = c * 2;\n' +
+            '    }\n' +
+            '    \n' +
+            '    return z;\n' +
+            '}\n');
+        symbolicSubstitution(parsedCode , '1 , 2 , 3');
+        assert.equal(
+            escodegen.generate(parsedCode),
+            'function foo(x, y, z) {\n' +
+            '    while (x + 1 < z) {\n' +
+            '        z = (x + 1 + (x + 1 + y)) * 2;\n' +
+            '    }\n' +
+            '    return z;\n' +
+            '}'
+        );
+    });
+
+    it('is creating correct replaced code according to assignment examples', () => {
+        let parsedCode = parseCode('function foo(x, y, z){\n' +
+            '    let a = x + 1;\n' +
+            '    let b = a + y;\n' +
+            '    let c = 0;\n' +
+            '    \n' +
+            '    if (b < z) {\n' +
+            '        c = c + 5;\n' +
+            '        return x + y + z + c;\n' +
+            '    } else if (b < z * 2) {\n' +
+            '        c = c + x + 5;\n' +
+            '        return x + y + z + c;\n' +
+            '    } else {\n' +
+            '        c = c + z + 5;\n' +
+            '        return x + y + z + c;\n' +
+            '    }\n' +
+            '}\n');
+        symbolicSubstitution(parsedCode , '10 , 100 , 1000');
+        assert.equal(
+            escodegen.generate(parsedCode),
+            'function foo(x, y, z) {\n' +
+            '    if (x + 1 + y < z) {\n' +
+            '        return x + y + z + (0 + 5);\n' +
+            '    } else if (x + 1 + y < z * 2) {\n' +
+            '        return x + y + z + (0 + 5 + x + 5);\n' +
+            '    } else {\n' +
+            '        return x + y + z + (0 + 5 + x + 5 + z + 5);\n' +
+            '    }\n' +
             '}'
         );
     });
