@@ -1,5 +1,5 @@
 import $ from 'jquery';
-import {symbolSub, parseCode, symbolTable, symbolicSubstitution, toPaint} from './code-analyzer';
+import {parseCode, symbolicSubstitution, toPaint} from './code-analyzer';
 import * as escodegen from 'escodegen';
 
 $(document).ready(function () {

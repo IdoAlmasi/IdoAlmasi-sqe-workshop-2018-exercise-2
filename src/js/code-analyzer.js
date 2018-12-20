@@ -10,12 +10,13 @@ let commands = {'VariableDeclaration' : varDeclarationHandler , 'FunctionDeclara
     'WhileStatement': whileHandler , 'IfStatement': ifHandler , 'BlockStatement': blockHandler ,
     'ExpressionStatement': expressionHandler, 'AssignmentExpression':assignmentExpressionHandler ,
     'BinaryExpression': binaryExpressionHandler , 'MemberExpression': memberExpressionHandler  ,
-    'ReturnStatement':returnHandler};
+    'ReturnStatement':returnHandler , 'Identifier': identifierHandler};
 
 let symbolTable = {};
 let functionArgs = [];
 let functionParams = [];
 let globalVars = [];
+let functionSymbolTable = {};
 
 let toPaint = [];
 
@@ -43,8 +44,8 @@ function symbolicSubstitution(parsedCode , args){
             removeLocalExpressions(x);
         }
     });
-    parsedCode = parseCode(escodegen.generate(parsedCode));
-    toPaint = getColoringLocations(parsedCode);
+    let newParsedCode = parseCode(escodegen.generate(parsedCode));
+    toPaint = getColoringLocations(newParsedCode);
 }
 
 function symbolSub(parsedCode){
@@ -52,19 +53,33 @@ function symbolSub(parsedCode){
     func !== undefined ? commands[parsedCode.type](parsedCode): null;
 }
 
+function identifierHandler(parsedCode) {
+    let ret = symbolTable[parsedCode.name];
+    let flag = 0;
+    if(ret!==undefined) {
+        while (flag===0 && isIdentifier(ret))
+            symbolTable[ret.name] !== undefined ? ret = symbolTable[ret.name] : flag = 1;
+        return ret;
+    }
+}
+
 function varDeclarationHandler(parsedCode) {
     let declarations = parsedCode.declarations;
     declarations.map(createVarDeclRow);
 }
 
-function createVarDeclRow(x){ //todo: Perhaps didn't handle all cases of init (array expressions)
+function createVarDeclRow(x){
     if(!isIdentifier(x.init)) {
         symbolSub(x.init);
         symbolTable[x.id.name] = x.init;
     }
     else {
-        symbolTable[x.id.name] = symbolTable[x.init.name];
-        x.init = symbolTable[x.id.name];
+        if(symbolTable[x.init.name]!==undefined) {
+            symbolTable[x.id.name] = symbolTable[x.init.name];
+            x.init = symbolTable[x.id.name];
+        }
+        else
+            symbolTable[x.id.name] = x.init;
     }
 }
 
@@ -73,9 +88,10 @@ function isIdentifier(x){
 }
 
 function functionHandler(parsedCode) {
+    functionSymbolTable = {};
     functionParams = parsedCode.params.map(x=>x.name);
     for(let i=0; i<functionParams.length; i++)
-        symbolTable[functionParams[i]] = functionArgs[i];
+        functionSymbolTable[functionParams[i]] = functionArgs[i];
     symbolSub(parsedCode.body);
 }
 
@@ -84,15 +100,11 @@ function expressionHandler(parsedCode) {
 }
 
 function assignmentExpressionHandler(parsedCode) {
-    if(isIdentifier(parsedCode.left)) {
-        if (isIdentifier(parsedCode.right)) {
-            symbolTable[parsedCode.left.name] = symbolTable[parsedCode.right.name];
-            parsedCode.right = symbolTable[parsedCode.left.name];
-        }
-        else {
-            symbolSub(parsedCode.right);
-            symbolTable[parsedCode.left.name] = parsedCode.right;
-        }
+    if(isIdentifier(parsedCode.left) && symbolTable[parsedCode.left.name]!==undefined) {
+        extractAssignmentHandler(parsedCode , symbolTable);
+    }
+    else if(isIdentifier(parsedCode.left) && functionSymbolTable[parsedCode.left.name]!==undefined){
+        extractAssignmentHandler(parsedCode , functionSymbolTable);
     }
     else{
         symbolSub(parsedCode.left);
@@ -100,20 +112,43 @@ function assignmentExpressionHandler(parsedCode) {
     }
 }
 
+function extractAssignmentHandler(parsedCode , symTbl) {
+    if (isIdentifier(parsedCode.right)) {
+        if(symbolTable[parsedCode.right.name]!==undefined)
+            symTbl[parsedCode.left.name] = symbolTable[parsedCode.right.name];
+        else
+            symTbl[parsedCode.left.name] = parsedCode.right;
+        parsedCode.right = symTbl[parsedCode.left.name];
+    }
+    else {
+        symbolSub(parsedCode.right);
+        symTbl[parsedCode.left.name] = parsedCode.right;
+    }
+}
+
 function memberExpressionHandler(parsedCode){
-    if(isIdentifier(parsedCode.property))
-        parsedCode.property = symbolTable[parsedCode.property.name];
+    if(isIdentifier(parsedCode.property)) {
+        if(symbolTable[parsedCode.property.name]!==undefined)
+            parsedCode.property = symbolTable[parsedCode.property.name];
+    }
     else
         symbolSub(parsedCode.property);
 }
 
 function binaryExpressionHandler(parsedCode){
-    if(isIdentifier(parsedCode.left))
-        parsedCode.left = symbolTable[parsedCode.left.name];
+    if(isIdentifier(parsedCode.left)){
+        let leftExpr = identifierHandler(parsedCode.left);
+        if(leftExpr!==undefined)
+            parsedCode.left = leftExpr;
+    }
     else
         symbolSub(parsedCode.left);
-    if(isIdentifier(parsedCode.right))
-        parsedCode.right = symbolTable[parsedCode.right.name];
+
+    if(isIdentifier(parsedCode.right)){
+        let rightExpr = identifierHandler(parsedCode.right);
+        if(rightExpr!==undefined)
+            parsedCode.right = rightExpr;
+    }
     else
         symbolSub(parsedCode.right);
 }
@@ -140,7 +175,7 @@ function blockHandler(parsedCode){
 }
 
 function returnHandler(parsedCode){
-    if(isIdentifier(parsedCode.argument))
+    if(isIdentifier(parsedCode.argument) && !(functionParams.includes(parsedCode.argument.name)))
         parsedCode.argument = symbolTable[parsedCode.argument.name];
     else
         symbolSub(parsedCode.argument);
@@ -160,11 +195,15 @@ function removeLocalExpressions(parsedCode){
 }
 
 function getColoringLocations(parsedCode) {
+    symbolTable =  Object.assign({}, symbolTable, functionSymbolTable);
+    functionSymbolTable = {};
     let locs = [];
     estraverse.traverse(parsedCode , {
         enter: function (body) {
-            if (body.type === 'IfStatement')
+            if (body.type === 'IfStatement') {
+                symbolSub(body.test);
                 locs.push([body.loc.start.line - 1, eval(escodegen.generate(body.test)) ? true : false]);
+            }
         }
     });
     return locs;
